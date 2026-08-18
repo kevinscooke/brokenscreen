@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0d12" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Broken Screen for Mac</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div class="mark" aria-hidden="true"><span></span></div>
+        <div class="brand"><p class="eyebrow">SEARCH &amp; BE FOUND</p><h1>Broken Screen <small>for Mac</small></h1><p class="subtitle" id="test-copy">Your Mac still works. Make macOS forget the broken screen.</p></div>
+        <button id="test-disconnect" class="power-button" type="button" disabled aria-pressed="false">
+          <span class="power-dot"></span><span id="power-label">OFF</span>
+        </button>
+      </header>
+      <section class="hero" aria-live="polite">
+        <div><p class="label">DISPLAY STATUS</p><h2 id="headline">Looking for displays…</h2><p id="summary">Reading the current macOS display configuration.</p></div>
+        <div id="status-dot" class="status-dot waiting" aria-label="Checking"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-title"><h3>Connected displays</h3><button id="refresh" type="button">Refresh</button></div>
+        <div id="display-list" class="display-list"></div>
+      </section>
+      <label class="login-setting">
+        <div><strong>Launch at login</strong><span>Start quietly in the menu bar.</span></div>
+        <input id="launch-at-login" type="checkbox" />
+      </label>
+      <footer><span id="phase">SEARCH &amp; BE FOUND</span><span id="platform">macOS</span></footer>
+    </main>
+  </body>
+</html>
