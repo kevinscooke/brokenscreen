@@ -20,7 +20,7 @@ h1 small { color: #858b98; font-size: 13px; font-weight: 650; letter-spacing: 0;
 .status-dot.ready { background: #d9ff6b; box-shadow: 0 0 0 7px #d9ff6b16, 0 0 24px #d9ff6b80; }
 .status-dot.caution { background: #ffbf69; box-shadow: 0 0 0 7px #ffbf6918; }
 .status-dot.error { background: #ff6b7a; }
-.panel { margin-top: 14px; padding: 22px; }
+.panel { margin-bottom: 14px; padding: 22px; }
 .panel-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .panel h3, .automation h3 { margin: 0; font-size: 14px; }
 #refresh { border: 0; background: transparent; color: #9ca3af; cursor: pointer; font-size: 12px; }
