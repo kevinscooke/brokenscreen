@@ -8,7 +8,8 @@ No lost windows. No wandering pointer. No complicated display-control dashboard.
 
 ## What it does
 
-- Keeps the built-in display disconnected while an external display is active.
+- Keeps the built-in display disconnected while a confirmed physical external display is active.
+- Preserves virtual displays without treating them as a physical safety monitor.
 - Reapplies the setting when the lid opens or the Mac wakes.
 - Restores the built-in display if the last external display disappears.
 - Restores normal behavior when Broken Screen is turned off or quits.
@@ -28,7 +29,7 @@ No lost windows. No wandering pointer. No complicated display-control dashboard.
 
 Broken Screen is an early macOS prototype. It has been tested on Apple silicon running macOS Tahoe 26 with directly connected external displays. Broader hardware, dock, DisplayLink, sleep/wake, and failure-recovery testing is still required before a public release.
 
-**Known limitation:** virtual displays are not filtered from physical monitors yet. Connecting or disconnecting a virtual display while Broken Screen is enabled can trigger an unwanted display reconfiguration or temporarily blank another display. Turn Broken Screen off before changing virtual-display connections until physical-display filtering is implemented.
+Version 0.2 classifies displays as built-in, physical, virtual, or unknown. Only a confirmed physical external display can authorize disconnecting the internal panel; virtual and unknown displays are ignored by the safety engine. Wider testing with BetterDisplay, Sidecar, AirPlay, DisplayLink, and different docks is still in progress.
 
 The app uses an undocumented macOS display-configuration function because Apple does not provide a public API for soft-disconnecting the built-in display. That makes Broken Screen unsuitable for the Mac App Store and means future macOS releases may require compatibility updates.
 
@@ -57,11 +58,11 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ## How it works
 
-The Tauri frontend provides the small control surface. The Rust backend uses public Core Graphics calls to identify online, active, and built-in displays. When Broken Screen is enabled and a usable external display exists, it applies an app-scoped display configuration through the private `CGSConfigureDisplayEnabled`/`SLSConfigureDisplayEnabled` function available in macOS.
+The Tauri frontend provides the small control surface. The Rust backend uses Core Graphics display state plus macOS display metadata to distinguish physical and virtual devices. When Broken Screen is enabled and a confirmed physical external display exists, it applies an app-scoped display configuration through the private `CGSConfigureDisplayEnabled`/`SLSConfigureDisplayEnabled` function available in macOS.
 
 Safety rules are part of the product, not optional extras:
 
-1. Do not disconnect the internal display without an active external display.
+1. Do not disconnect the internal display without an active, confirmed physical external display.
 2. Restore the internal display when external displays disappear.
 3. Restore it when automation is disabled or the app exits.
 4. Keep switching app-scoped so WindowServer can unwind it when the process ends.
@@ -72,7 +73,7 @@ The launch-at-login setting points to the installed app. During development, lea
 ## Roadmap
 
 - Signed and notarized distribution
-- Physical-display filtering for AirPlay, Sidecar, and virtual displays
+- Broader classification testing for BetterDisplay, AirPlay, Sidecar, DisplayLink, and docks
 - Event-driven hot-plug and wake handling
 - Automated tests across Apple silicon models, docks, and macOS versions
 - Accessible onboarding and recovery instructions

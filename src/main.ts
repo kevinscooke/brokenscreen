@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 
-type Display = { id: number; builtIn: boolean; main: boolean; active: boolean; online: boolean; width: number; height: number };
-type DisplayStatus = { displays: Display[]; hasBuiltIn: boolean; externalCount: number; canSafelyDisconnect: boolean; platformSupported: boolean };
+type DisplayKind = "builtIn" | "physical" | "virtual" | "unknown";
+type Display = { id: number; kind: DisplayKind; builtIn: boolean; main: boolean; active: boolean; online: boolean; width: number; height: number };
+type DisplayStatus = { displays: Display[]; hasBuiltIn: boolean; externalCount: number; virtualCount: number; unknownCount: number; canSafelyDisconnect: boolean; platformSupported: boolean };
 type EngineStatus = { available: boolean; symbol: string | null; testRunning: boolean; automationEnabled: boolean };
 
 const headline = document.querySelector<HTMLElement>("#headline")!;
@@ -19,11 +20,17 @@ let currentStatus: DisplayStatus | null = null;
 let automationEnabled = false;
 
 function displayCard(display: Display): string {
-  const kind = display.builtIn ? "Built-in Retina display" : "External display";
+  const kind = display.kind === "builtIn" ? "Built-in Retina display"
+    : display.kind === "physical" ? "Physical external display"
+    : display.kind === "virtual" ? "Virtual display"
+    : "Unknown display";
   const badges = [
     display.main ? '<span class="badge">Main</span>' : "",
     !display.active ? '<span class="badge warn">Inactive</span>' : "",
-    display.builtIn ? '<span class="badge muted">Internal</span>' : '<span class="badge safe">External</span>',
+    display.kind === "builtIn" ? '<span class="badge muted">Internal</span>'
+      : display.kind === "physical" ? '<span class="badge safe">Physical</span>'
+      : display.kind === "virtual" ? '<span class="badge muted">Virtual</span>'
+      : '<span class="badge warn">Unknown</span>',
   ].join("");
   return `<article class="display-card">
     <div class="display-icon ${display.builtIn ? "laptop" : "monitor"}"></div>
@@ -42,12 +49,15 @@ async function refresh(): Promise<void> {
     platform.textContent = status.platformSupported ? "Apple silicon · supported" : "Unsupported platform";
     if (status.canSafelyDisconnect) {
       headline.textContent = "Ready for the safety engine";
-      summary.textContent = `${status.externalCount} external display${status.externalCount === 1 ? " is" : "s are"} active. The internal panel has a recovery target.`;
+      summary.textContent = `${status.externalCount} physical external display${status.externalCount === 1 ? " is" : "s are"} active. Virtual displays remain independent.`;
       dot.className = "status-dot ready";
       dot.setAttribute("aria-label", "Ready");
     } else {
       headline.textContent = "Keep the internal display connected";
-      summary.textContent = "Broken Screen will never disconnect the only usable display. Connect a physical monitor to continue.";
+      const ignored = status.virtualCount + status.unknownCount;
+      summary.textContent = ignored > 0
+        ? `${ignored} virtual or unverified display${ignored === 1 ? " is" : "s are"} being ignored for safety. Connect a confirmed physical monitor to continue.`
+        : "Broken Screen will never disconnect the only usable display. Connect a physical monitor to continue.";
       dot.className = "status-dot caution";
       dot.setAttribute("aria-label", "External display required");
     }

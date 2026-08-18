@@ -1,9 +1,19 @@
 use serde::Serialize;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum DisplayKind {
+    BuiltIn,
+    Physical,
+    Virtual,
+    Unknown,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DisplayInfo {
     id: u32,
+    kind: DisplayKind,
     built_in: bool,
     main: bool,
     active: bool,
@@ -18,6 +28,8 @@ struct DisplayStatus {
     displays: Vec<DisplayInfo>,
     has_built_in: bool,
     external_count: usize,
+    virtual_count: usize,
+    unknown_count: usize,
     can_safely_disconnect: bool,
     platform_supported: bool,
 }
@@ -33,10 +45,14 @@ struct EngineStatus {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::DisplayInfo;
+    use super::{DisplayInfo, DisplayKind};
+    use core_foundation::base::{CFTypeRef, TCFType};
+    use core_foundation::boolean::{kCFBooleanFalse, kCFBooleanTrue};
+    use core_foundation::dictionary::{CFDictionary, CFDictionaryGetValue, CFDictionaryRef};
+    use core_foundation::string::CFString;
     use std::ffi::{c_char, c_void};
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
     type CGDirectDisplayId = u32;
     type CGError = i32;
@@ -68,30 +84,65 @@ mod macos {
         fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
     }
 
+    #[link(name = "CoreDisplay", kind = "framework")]
+    unsafe extern "C" {
+        fn CoreDisplay_DisplayCreateInfoDictionary(display: CGDirectDisplayId) -> CFDictionaryRef;
+    }
+
+    fn display_kind(id: CGDirectDisplayId, built_in: bool) -> DisplayKind {
+        if built_in {
+            return DisplayKind::BuiltIn;
+        }
+        let dictionary_ref = unsafe { CoreDisplay_DisplayCreateInfoDictionary(id) };
+        if dictionary_ref.is_null() {
+            return DisplayKind::Unknown;
+        }
+        let dictionary: CFDictionary = unsafe { TCFType::wrap_under_create_rule(dictionary_ref) };
+        let key = CFString::new("kCGDisplayIsVirtualDevice");
+        let value = unsafe {
+            CFDictionaryGetValue(dictionary.as_concrete_TypeRef(), key.as_CFTypeRef()) as CFTypeRef
+        };
+        if value == unsafe { kCFBooleanTrue } as CFTypeRef {
+            DisplayKind::Virtual
+        } else if value == unsafe { kCFBooleanFalse } as CFTypeRef {
+            DisplayKind::Physical
+        } else {
+            DisplayKind::Unknown
+        }
+    }
+
     pub fn online_displays() -> Result<Vec<DisplayInfo>, String> {
         let mut count = 0;
         let result = unsafe { CGGetOnlineDisplayList(0, std::ptr::null_mut(), &mut count) };
         if result != 0 {
-            return Err(format!("Core Graphics could not count displays (error {result})"));
+            return Err(format!(
+                "Core Graphics could not count displays (error {result})"
+            ));
         }
 
         let mut ids = vec![0; count as usize];
         let result = unsafe { CGGetOnlineDisplayList(count, ids.as_mut_ptr(), &mut count) };
         if result != 0 {
-            return Err(format!("Core Graphics could not list displays (error {result})"));
+            return Err(format!(
+                "Core Graphics could not list displays (error {result})"
+            ));
         }
         ids.truncate(count as usize);
 
         Ok(ids
             .into_iter()
-            .map(|id| DisplayInfo {
-                id,
-                built_in: unsafe { CGDisplayIsBuiltin(id) != 0 },
-                main: unsafe { CGDisplayIsMain(id) != 0 },
-                active: unsafe { CGDisplayIsActive(id) != 0 },
-                online: unsafe { CGDisplayIsOnline(id) != 0 },
-                width: unsafe { CGDisplayPixelsWide(id) },
-                height: unsafe { CGDisplayPixelsHigh(id) },
+            .map(|id| {
+                let built_in = unsafe { CGDisplayIsBuiltin(id) != 0 };
+                DisplayInfo {
+                    id,
+                    kind: display_kind(id, built_in),
+                    built_in,
+                    main: unsafe { CGDisplayIsMain(id) != 0 },
+                    active: unsafe { CGDisplayIsActive(id) != 0 },
+                    online: unsafe { CGDisplayIsOnline(id) != 0 },
+                    width: unsafe { CGDisplayPixelsWide(id) },
+                    height: unsafe { CGDisplayPixelsHigh(id) },
+                }
             })
             .collect())
     }
@@ -99,12 +150,19 @@ mod macos {
     fn configure_symbol() -> Option<(&'static str, ConfigureDisplayEnabled)> {
         const RTLD_DEFAULT: *mut c_void = -2_isize as *mut c_void;
         for (name, symbol) in [
-            ("CGSConfigureDisplayEnabled", b"CGSConfigureDisplayEnabled\0".as_ptr()),
-            ("SLSConfigureDisplayEnabled", b"SLSConfigureDisplayEnabled\0".as_ptr()),
+            (
+                "CGSConfigureDisplayEnabled",
+                b"CGSConfigureDisplayEnabled\0".as_ptr(),
+            ),
+            (
+                "SLSConfigureDisplayEnabled",
+                b"SLSConfigureDisplayEnabled\0".as_ptr(),
+            ),
         ] {
             let address = unsafe { dlsym(RTLD_DEFAULT, symbol.cast()) };
             if !address.is_null() {
-                let function = unsafe { std::mem::transmute::<*mut c_void, ConfigureDisplayEnabled>(address) };
+                let function =
+                    unsafe { std::mem::transmute::<*mut c_void, ConfigureDisplayEnabled>(address) };
                 return Some((name, function));
             }
         }
@@ -113,28 +171,38 @@ mod macos {
 
     pub fn engine_status() -> (Option<String>, bool, bool) {
         let symbol = configure_symbol().map(|(name, _)| name.to_string());
-        let running = TEST_DISPLAY.lock().map(|value| value.is_some()).unwrap_or(false);
+        let running = TEST_DISPLAY
+            .lock()
+            .map(|value| value.is_some())
+            .unwrap_or(false);
         (symbol, running, AUTOMATION_ENABLED.load(Ordering::SeqCst))
     }
 
     fn set_enabled_with_scope(display_id: u32, enabled: bool, scope: u32) -> Result<(), String> {
-        let (name, configure) = configure_symbol()
-            .ok_or_else(|| "The private macOS display configuration symbol is unavailable".to_string())?;
+        let (name, configure) = configure_symbol().ok_or_else(|| {
+            "The private macOS display configuration symbol is unavailable".to_string()
+        })?;
         let mut config: CGDisplayConfigRef = std::ptr::null_mut();
         let begin = unsafe { CGBeginDisplayConfiguration(&mut config) };
         if begin != 0 || config.is_null() {
-            return Err(format!("Could not begin display configuration (error {begin})"));
+            return Err(format!(
+                "Could not begin display configuration (error {begin})"
+            ));
         }
 
         let configured = unsafe { configure(config, display_id, enabled) };
         if configured != 0 {
             unsafe { CGCancelDisplayConfiguration(config) };
-            return Err(format!("{name} rejected display {display_id} (error {configured})"));
+            return Err(format!(
+                "{name} rejected display {display_id} (error {configured})"
+            ));
         }
 
         let completed = unsafe { CGCompleteDisplayConfiguration(config, scope) };
         if completed != 0 {
-            return Err(format!("Could not complete display configuration (error {completed})"));
+            return Err(format!(
+                "Could not complete display configuration (error {completed})"
+            ));
         }
         Ok(())
     }
@@ -145,8 +213,13 @@ mod macos {
     }
 
     fn start_watchdog(display_id: u32) -> Result<(), String> {
-        let mut watchdog = WATCHDOG.lock().map_err(|_| "Watchdog state is unavailable")?;
-        if watchdog.as_mut().is_some_and(|child| child.try_wait().ok().flatten().is_none()) {
+        let mut watchdog = WATCHDOG
+            .lock()
+            .map_err(|_| "Watchdog state is unavailable")?;
+        if watchdog
+            .as_mut()
+            .is_some_and(|child| child.try_wait().ok().flatten().is_none())
+        {
             return Ok(());
         }
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
@@ -177,7 +250,9 @@ mod macos {
     }
 
     pub fn watchdog(parent_pid: i32, display_id: u32) {
-        unsafe extern "C" { fn kill(pid: i32, signal: i32) -> i32; }
+        unsafe extern "C" {
+            fn kill(pid: i32, signal: i32) -> i32;
+        }
         while unsafe { kill(parent_pid, 0) } == 0 {
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
@@ -189,7 +264,9 @@ mod macos {
         let displays = online_displays()?;
         let external_count = displays
             .iter()
-            .filter(|display| !display.built_in && display.active && display.online)
+            .filter(|display| {
+                display.kind == DisplayKind::Physical && display.active && display.online
+            })
             .count();
         if external_count == 0 {
             return Err("Connect a physical external display before running the test".into());
@@ -201,7 +278,9 @@ mod macos {
             .ok_or_else(|| "The built-in display is not currently active".to_string())?;
 
         {
-            let mut test = TEST_DISPLAY.lock().map_err(|_| "Test state is unavailable")?;
+            let mut test = TEST_DISPLAY
+                .lock()
+                .map_err(|_| "Test state is unavailable")?;
             if test.is_some() {
                 return Err("A disconnect test is already running".into());
             }
@@ -245,7 +324,8 @@ mod macos {
     }
 
     fn persist_automation(enabled: bool) -> Result<(), String> {
-        let path = preference_path().ok_or_else(|| "Could not locate the user settings folder".to_string())?;
+        let path = preference_path()
+            .ok_or_else(|| "Could not locate the user settings folder".to_string())?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
@@ -255,7 +335,15 @@ mod macos {
 
     fn clamshell_closed() -> Option<bool> {
         let output = std::process::Command::new("/usr/sbin/ioreg")
-            .args(["-r", "-n", "IOPMrootDomain", "-d", "1", "-k", "AppleClamshellState"])
+            .args([
+                "-r",
+                "-n",
+                "IOPMrootDomain",
+                "-d",
+                "1",
+                "-k",
+                "AppleClamshellState",
+            ])
             .output()
             .ok()?;
         let registry = String::from_utf8(output.stdout).ok()?;
@@ -269,7 +357,9 @@ mod macos {
     }
 
     fn restore_managed_display(force: bool) -> Result<(), String> {
-        let cached = *MANAGED_DISPLAY.lock().map_err(|_| "Display state is unavailable")?;
+        let cached = *MANAGED_DISPLAY
+            .lock()
+            .map_err(|_| "Display state is unavailable")?;
         if cached.is_none() {
             DEFERRED_RESTORE.store(false, Ordering::SeqCst);
             stop_watchdog();
@@ -279,7 +369,10 @@ mod macos {
             DEFERRED_RESTORE.store(true, Ordering::SeqCst);
             return Ok(());
         }
-        let display_id = MANAGED_DISPLAY.lock().map_err(|_| "Display state is unavailable")?.take();
+        let display_id = MANAGED_DISPLAY
+            .lock()
+            .map_err(|_| "Display state is unavailable")?
+            .take();
         if let Some(display_id) = display_id {
             set_enabled(display_id, true)?;
         }
@@ -290,10 +383,15 @@ mod macos {
 
     pub fn reconcile() -> Result<(), String> {
         let displays = online_displays()?;
-        let external_count = displays.iter()
-            .filter(|display| !display.built_in && display.active && display.online)
+        let external_count = displays
+            .iter()
+            .filter(|display| {
+                display.kind == DisplayKind::Physical && display.active && display.online
+            })
             .count();
-        let internal = displays.iter().find(|display| display.built_in && display.online);
+        let internal = displays
+            .iter()
+            .find(|display| display.built_in && display.online);
 
         if !AUTOMATION_ENABLED.load(Ordering::SeqCst) {
             return restore_managed_display(false);
@@ -375,7 +473,15 @@ fn display_status() -> Result<DisplayStatus, String> {
     let has_built_in = displays.iter().any(|display| display.built_in);
     let external_count = displays
         .iter()
-        .filter(|display| !display.built_in && display.active && display.online)
+        .filter(|display| display.kind == DisplayKind::Physical && display.active && display.online)
+        .count();
+    let virtual_count = displays
+        .iter()
+        .filter(|display| display.kind == DisplayKind::Virtual && display.active && display.online)
+        .count();
+    let unknown_count = displays
+        .iter()
+        .filter(|display| display.kind == DisplayKind::Unknown && display.active && display.online)
         .count();
 
     Ok(DisplayStatus {
@@ -383,6 +489,8 @@ fn display_status() -> Result<DisplayStatus, String> {
         displays,
         has_built_in,
         external_count,
+        virtual_count,
+        unknown_count,
         platform_supported: cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
     })
 }
@@ -393,7 +501,12 @@ fn engine_status() -> EngineStatus {
     let (symbol, test_running, automation_enabled) = macos::engine_status();
     #[cfg(not(target_os = "macos"))]
     let (symbol, test_running, automation_enabled) = (None, false, false);
-    EngineStatus { available: symbol.is_some(), symbol, test_running, automation_enabled }
+    EngineStatus {
+        available: symbol.is_some(),
+        symbol,
+        test_running,
+        automation_enabled,
+    }
 }
 
 #[tauri::command]
@@ -434,7 +547,8 @@ pub fn run() {
             ))?;
 
             #[cfg(target_os = "macos")]
-            app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+            app.handle()
+                .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
 
             #[cfg(target_os = "macos")]
             macos::start_monitor();
@@ -444,9 +558,12 @@ pub fn run() {
                 use tauri::menu::{Menu, MenuItem};
                 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-                let open = MenuItem::with_id(app, "open", "Open Broken Screen", true, None::<&str>)?;
-                let toggle = MenuItem::with_id(app, "toggle", "Toggle On / Off", true, None::<&str>)?;
-                let quit = MenuItem::with_id(app, "quit", "Quit Broken Screen", true, None::<&str>)?;
+                let open =
+                    MenuItem::with_id(app, "open", "Open Broken Screen", true, None::<&str>)?;
+                let toggle =
+                    MenuItem::with_id(app, "toggle", "Toggle On / Off", true, None::<&str>)?;
+                let quit =
+                    MenuItem::with_id(app, "quit", "Quit Broken Screen", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&open, &toggle, &quit])?;
 
                 TrayIconBuilder::with_id("broken-screen")
@@ -473,11 +590,14 @@ pub fn run() {
                         _ => {}
                     })
                     .on_tray_icon_event(|tray, event| {
-                        if matches!(event, TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        }) {
+                        if matches!(
+                            event,
+                            TrayIconEvent::Click {
+                                button: MouseButton::Left,
+                                button_state: MouseButtonState::Up,
+                                ..
+                            }
+                        ) {
                             if let Some(window) = tray.app_handle().get_webview_window("main") {
                                 let _ = window.show();
                                 let _ = window.set_focus();
