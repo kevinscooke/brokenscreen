@@ -39,6 +39,8 @@ After protection has started with a physical monitor present, an active Screen S
 
 The app uses an undocumented macOS display-configuration function because Apple does not provide a public API for soft-disconnecting the built-in display. That makes Broken Screen unsuitable for the Mac App Store and means future macOS releases may require compatibility updates.
 
+The [safety model](docs/safety-model.md) documents the invariants, recovery layers, trust boundaries, and known limitations. The [architecture](docs/architecture.md) explains how the Tauri UI, Rust engine, Core Graphics boundary, persistence, and watchdog fit together.
+
 Broken Screen cannot make damaged display wiring electrically safe. If moving the hinge causes heat, smells, shutdowns, or other electrical symptoms, stop using the hinge and have the Mac serviced.
 
 ## Development
@@ -59,7 +61,8 @@ Production checks:
 
 ```sh
 npm run build
-cargo check --manifest-path src-tauri/Cargo.toml
+npm run check
+npm test
 ```
 
 ## How it works
@@ -75,6 +78,10 @@ Safety rules are part of the product, not optional extras:
 5. Start an independent recovery process before disconnecting the internal display.
 
 The launch-at-login setting points to the installed app. During development, leave it off unless you intentionally want the debug build to start when you sign in.
+
+## Verification
+
+`npm run verify` builds the frontend, type-checks TypeScript, checks the Rust application, and runs the safety-policy unit tests. GitHub Actions repeats those checks on macOS for every push and pull request.
 
 ## Roadmap
 

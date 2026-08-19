@@ -494,6 +494,10 @@ fn display_status() -> Result<DisplayStatus, String> {
     #[cfg(not(target_os = "macos"))]
     let displays: Vec<DisplayInfo> = Vec::new();
 
+    Ok(summarize_displays(displays))
+}
+
+fn summarize_displays(displays: Vec<DisplayInfo>) -> DisplayStatus {
     let has_built_in = displays
         .iter()
         .any(|display| display.kind == DisplayKind::BuiltIn);
@@ -510,7 +514,7 @@ fn display_status() -> Result<DisplayStatus, String> {
         .filter(|display| display.kind == DisplayKind::Unknown && display.active && display.online)
         .count();
 
-    Ok(DisplayStatus {
+    DisplayStatus {
         can_safely_disconnect: has_built_in && external_count > 0,
         displays,
         has_built_in,
@@ -518,7 +522,55 @@ fn display_status() -> Result<DisplayStatus, String> {
         virtual_count,
         unknown_count,
         platform_supported: cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
-    })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{summarize_displays, DisplayInfo, DisplayKind};
+
+    fn display(id: u32, kind: DisplayKind, active: bool, online: bool) -> DisplayInfo {
+        DisplayInfo {
+            id,
+            kind,
+            built_in: kind == DisplayKind::BuiltIn,
+            main: false,
+            active,
+            online,
+            width: 1920,
+            height: 1080,
+        }
+    }
+
+    #[test]
+    fn requires_a_built_in_and_active_physical_display() {
+        let safe = summarize_displays(vec![
+            display(1, DisplayKind::BuiltIn, true, true),
+            display(2, DisplayKind::Physical, true, true),
+        ]);
+        assert!(safe.can_safely_disconnect);
+        assert_eq!(safe.external_count, 1);
+
+        let virtual_only = summarize_displays(vec![
+            display(1, DisplayKind::BuiltIn, true, true),
+            display(3, DisplayKind::Virtual, true, true),
+        ]);
+        assert!(!virtual_only.can_safely_disconnect);
+        assert_eq!(virtual_only.virtual_count, 1);
+    }
+
+    #[test]
+    fn ignores_inactive_and_offline_external_displays() {
+        let status = summarize_displays(vec![
+            display(1, DisplayKind::BuiltIn, true, true),
+            display(2, DisplayKind::Physical, false, true),
+            display(3, DisplayKind::Physical, true, false),
+            display(4, DisplayKind::Unknown, true, true),
+        ]);
+        assert!(!status.can_safely_disconnect);
+        assert_eq!(status.external_count, 0);
+        assert_eq!(status.unknown_count, 1);
+    }
 }
 
 #[tauri::command]

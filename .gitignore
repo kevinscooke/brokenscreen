@@ -29,6 +29,11 @@ AuthKey_*.p8
 *.dmg
 *.pkg
 
+# Tauri mobile icon variants are not part of this macOS-only app
+src-tauri/icons/64x64.png
+src-tauri/icons/android/
+src-tauri/icons/ios/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
