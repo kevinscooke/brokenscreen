@@ -3,6 +3,7 @@ name = "broken-screen-for-mac"
 version = "0.2.0"
 description = "Safety-first automatic built-in display management for macOS"
 authors = ["Search & Be Found"]
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

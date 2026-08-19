@@ -1,5 +1,9 @@
 # Broken Screen for Mac
 
+<p align="center">
+  <img src="assets/app-icon.png" width="160" height="160" alt="Broken Screen for Mac icon showing a cracked laptop display" />
+</p>
+
 > Broken screen doesn't mean broken dreams.
 
 Broken Screen for Mac is a focused utility for MacBooks with damaged, unwanted, or permanently dark internal displays. Turn it on once and macOS stops treating the built-in panel as usable desktop space whenever an external monitor is connected—even when the lid opens.
@@ -30,6 +34,8 @@ No lost windows. No wandering pointer. No complicated display-control dashboard.
 Broken Screen is an early macOS prototype. It has been tested on Apple silicon running macOS Tahoe 26 with directly connected external displays. Broader hardware, dock, DisplayLink, sleep/wake, and failure-recovery testing is still required before a public release.
 
 Version 0.2 classifies displays as built-in, physical, virtual, or unknown. Only a confirmed physical external display can authorize disconnecting the internal panel; virtual and unknown displays are ignored by the safety engine. Wider testing with BetterDisplay, Sidecar, AirPlay, DisplayLink, and different docks is still in progress.
+
+After protection has started with a physical monitor present, an active Screen Sharing, virtual, or software-backed DisplayLink display can preserve the current protected state. These displays cannot initiate protection by themselves, but their connection must not force a display restore or rearrange the desktop.
 
 The app uses an undocumented macOS display-configuration function because Apple does not provide a public API for soft-disconnecting the built-in display. That makes Broken Screen unsuitable for the Mac App Store and means future macOS releases may require compatibility updates.
 
@@ -84,4 +90,4 @@ Broken Screen for Mac is made by **Search & Be Found**.
 
 ## License
 
-No public license has been selected yet. All rights are reserved until a license is added.
+Broken Screen for Mac is available under the [MIT License](LICENSE).

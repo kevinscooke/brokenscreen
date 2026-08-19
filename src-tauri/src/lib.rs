@@ -90,12 +90,13 @@ mod macos {
     }
 
     fn display_kind(id: CGDirectDisplayId, built_in: bool) -> DisplayKind {
-        if built_in {
-            return DisplayKind::BuiltIn;
-        }
         let dictionary_ref = unsafe { CoreDisplay_DisplayCreateInfoDictionary(id) };
         if dictionary_ref.is_null() {
-            return DisplayKind::Unknown;
+            return if built_in {
+                DisplayKind::BuiltIn
+            } else {
+                DisplayKind::Unknown
+            };
         }
         let dictionary: CFDictionary = unsafe { TCFType::wrap_under_create_rule(dictionary_ref) };
         let key = CFString::new("kCGDisplayIsVirtualDevice");
@@ -104,6 +105,8 @@ mod macos {
         };
         if value == unsafe { kCFBooleanTrue } as CFTypeRef {
             DisplayKind::Virtual
+        } else if built_in {
+            DisplayKind::BuiltIn
         } else if value == unsafe { kCFBooleanFalse } as CFTypeRef {
             DisplayKind::Physical
         } else {
@@ -273,7 +276,9 @@ mod macos {
         }
         let internal_id = displays
             .iter()
-            .find(|display| display.built_in && display.active && display.online)
+            .find(|display| {
+                display.kind == DisplayKind::BuiltIn && display.active && display.online
+            })
             .map(|display| display.id)
             .ok_or_else(|| "The built-in display is not currently active".to_string())?;
 
@@ -383,28 +388,47 @@ mod macos {
 
     pub fn reconcile() -> Result<(), String> {
         let displays = online_displays()?;
-        let external_count = displays
+        let physical_count = displays
             .iter()
             .filter(|display| {
                 display.kind == DisplayKind::Physical && display.active && display.online
             })
             .count();
-        let internal = displays
+        let active_external_count = displays
             .iter()
-            .find(|display| display.built_in && display.online);
+            .filter(|display| {
+                display.kind != DisplayKind::BuiltIn && display.active && display.online
+            })
+            .count();
+        let managed_id = *MANAGED_DISPLAY
+            .lock()
+            .map_err(|_| "Display state is unavailable")?;
+        let already_managed = managed_id.is_some();
+        let internal = managed_id
+            .and_then(|id| displays.iter().find(|display| display.id == id))
+            .or_else(|| {
+                displays
+                    .iter()
+                    .find(|display| display.kind == DisplayKind::BuiltIn && display.online)
+            });
 
         if !AUTOMATION_ENABLED.load(Ordering::SeqCst) {
             return restore_managed_display(false);
         }
-        if external_count == 0 {
+        // A confirmed physical monitor is required to begin protection. Once the
+        // internal panel is already managed, virtual and software-backed displays
+        // may preserve that state without causing a topology-changing restore.
+        if physical_count == 0 && !(already_managed && active_external_count > 0) {
             return restore_managed_display(true);
         }
 
         DEFERRED_RESTORE.store(false, Ordering::SeqCst);
 
         if let Some(internal) = internal {
-            if let Ok(mut cached) = MANAGED_DISPLAY.lock() {
-                *cached = Some(internal.id);
+            if managed_id.is_none() {
+                if let Ok(mut cached) = MANAGED_DISPLAY.lock() {
+                    *cached = Some(internal.id);
+                }
             }
             if internal.active {
                 start_watchdog(internal.id)?;
@@ -470,7 +494,9 @@ fn display_status() -> Result<DisplayStatus, String> {
     #[cfg(not(target_os = "macos"))]
     let displays: Vec<DisplayInfo> = Vec::new();
 
-    let has_built_in = displays.iter().any(|display| display.built_in);
+    let has_built_in = displays
+        .iter()
+        .any(|display| display.kind == DisplayKind::BuiltIn);
     let external_count = displays
         .iter()
         .filter(|display| display.kind == DisplayKind::Physical && display.active && display.online)
@@ -568,7 +594,8 @@ pub fn run() {
 
                 TrayIconBuilder::with_id("broken-screen")
                     .icon(app.default_window_icon().expect("app icon").clone())
-                    .icon_as_template(true)
+                    // Keep the generated blue cracked-screen artwork in the menu bar.
+                    .icon_as_template(false)
                     .tooltip("Broken Screen for Mac")
                     .menu(&menu)
                     .show_menu_on_left_click(false)

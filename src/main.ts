@@ -33,7 +33,7 @@ function displayCard(display: Display): string {
       : '<span class="badge warn">Unknown</span>',
   ].join("");
   return `<article class="display-card">
-    <div class="display-icon ${display.builtIn ? "laptop" : "monitor"}"></div>
+    <div class="display-icon ${display.kind === "builtIn" ? "laptop" : "monitor"}"></div>
     <div class="display-copy"><h4>${kind}</h4><p>${display.width} × ${display.height} · Display ${display.id}</p></div>
     <div class="badges">${badges}</div>
   </article>`;
